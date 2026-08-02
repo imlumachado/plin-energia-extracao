@@ -1,0 +1,39 @@
+# Ambiente virtual Python
+.venv/
+venv/
+env/
+
+# Credenciais e variáveis de ambiente
+.env
+*.env
+
+# Dados extraídos do PLIN
+saida_plin/
+
+# Arquivos de dados
+*.json
+*.csv
+*.xlsx
+
+# Arquivos HTML e imagens capturados do portal
+*.html
+*.png
+
+# Arquivos de diagnóstico da extração
+*.txt
+
+# Cache Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
