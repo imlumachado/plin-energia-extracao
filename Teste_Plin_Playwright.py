@@ -16,6 +16,18 @@ from playwright.async_api import (
     TimeoutError as PlaywrightTimeoutError,
 )
 
+from extracao import extrair_faturas
+
+import db as banco
+
+try:
+
+    from dotenv import load_dotenv
+    load_dotenv()
+
+except ImportError:
+    pass
+
 
 # =============================================================================
 # CONFIGURAÇÕES
@@ -42,6 +54,13 @@ ARQUIVO_RSC = PASTA_SAIDA / "rsc_extraido.txt"
 ARQUIVO_API = PASTA_SAIDA / "api_respostas.json"
 ARQUIVO_REQUISICOES = PASTA_SAIDA / "requisicoes_rede.json"
 ARQUIVO_DIAGNOSTICO = PASTA_SAIDA / "diagnostico.txt"
+
+ARQUIVO_DB = Path(
+    os.getenv(
+        "PLIN_DB",
+        "saida_plin/plin.db"
+    )
+)
 
 PASTA_RESPOSTAS = PASTA_SAIDA / "respostas_api"
 PASTA_RESPOSTAS.mkdir(parents=True, exist_ok=True)
@@ -1514,33 +1533,46 @@ def salvar_csv(registros):
         )
 
     prioridades = [
-        "id",
-        "company_id",
-        "date_ref",
-        "date_due",
-        "saved_trees",
-        "saved_co2_kg",
-        "saved_money",
-        "kwh_consumed",
-        "kwh_compensado",
-        "dealership_energy_cost",
-        "dealership_energy_cost_without_plin_estimation",
-        "bill_cost",
-        "dealership_bill_cost",
-        "dealership_extra_fees",
-        "consumption_flag",
+        "uc",
+        "cnpj",
+        "razao_social",
+        "endereco",
+        "competencia",
         "dealership_bill_id",
         "bill_external_ref",
+        "date_ref",
+        "date_due",
         "bill_date_due",
-        "bill_status",
-        "dealership_bill_status",
-        "scraper_status",
+        "kwh_consumed",
+        "kwh_compensado",
+        "consumption_flag",
+        "dealership_bill_cost",
+        "dealership_extra_fees",
+        "dealership_energy_cost",
+        "dealership_energy_cost_without_plin",
+        "bill_cost",
+        "saved_money",
+        "saved_co2_kg",
+        "saved_trees",
         "desconto",
         "desconto_final",
+        "desconto_uc",
+        "dealership_bill_status",
+        "bill_status",
+        "scraper_status",
         "bill_pdf_url",
-        "created_at",
-        "updated_at",
-        "_origem",
+        "data_pagamento",
+        "paid_amount",
+        "left_amount",
+        "tem_boleto_plin",
+        "energy_read_id",
+        "energy_bill_id",
+        "company_id",
+        "checking_account_id",
+        "boleto_unico_uc",
+        "file_key",
+        "date_payment",
+        "proxima_leitura",
     ]
 
     campos_ordenados = []
@@ -1649,34 +1681,46 @@ def salvar_excel(registros):
         )
 
     prioridades = [
-        "id",
-        "company_id",
-        "date_ref",
-        "date_due",
-        "saved_trees",
-        "saved_co2_kg",
-        "saved_money",
-        "kwh_consumed",
-        "kwh_compensado",
-        "dealership_energy_cost",
-        "dealership_energy_cost_without_plin_estimation",
-        "bill_cost",
-        "dealership_bill_cost",
-        "dealership_extra_fees",
-        "energy_bills",
-        "consumption_flag",
+        "uc",
+        "cnpj",
+        "razao_social",
+        "endereco",
+        "competencia",
         "dealership_bill_id",
         "bill_external_ref",
+        "date_ref",
+        "date_due",
         "bill_date_due",
-        "bill_status",
-        "dealership_bill_status",
-        "scraper_status",
+        "kwh_consumed",
+        "kwh_compensado",
+        "consumption_flag",
+        "dealership_bill_cost",
+        "dealership_extra_fees",
+        "dealership_energy_cost",
+        "dealership_energy_cost_without_plin",
+        "bill_cost",
+        "saved_money",
+        "saved_co2_kg",
+        "saved_trees",
         "desconto",
         "desconto_final",
+        "desconto_uc",
+        "dealership_bill_status",
+        "bill_status",
+        "scraper_status",
         "bill_pdf_url",
-        "created_at",
-        "updated_at",
-        "_origem",
+        "data_pagamento",
+        "paid_amount",
+        "left_amount",
+        "tem_boleto_plin",
+        "energy_read_id",
+        "energy_bill_id",
+        "company_id",
+        "checking_account_id",
+        "boleto_unico_uc",
+        "file_key",
+        "date_payment",
+        "proxima_leitura",
     ]
 
     campos_ordenados = []
@@ -2004,20 +2048,32 @@ def gerar_resumo(
                 str(date_ref)[:7]
             )
 
-        for campo in [
-            "dealership_bill_id",
-            "bill_external_ref",
-        ]:
+        uc = registro.get(
+            "uc"
+        )
 
-            valor = registro.get(
-                campo
+        if uc:
+
+            ucs.add(
+                str(uc)
             )
 
-            if valor:
+        else:
 
-                ucs.add(
-                    str(valor)
+            for campo in [
+                "dealership_bill_id",
+                "bill_external_ref",
+            ]:
+
+                valor = registro.get(
+                    campo
                 )
+
+                if valor:
+
+                    ucs.add(
+                        str(valor)
+                    )
 
     resumo[
         "campos_encontrados"
@@ -2196,58 +2252,21 @@ async def main():
             registros = []
 
             # -----------------------------------------------------------------
-            # MÉTODO 1 - HTML/RSC
+            # EXTRAÇÃO UNIFICADA (HTML/RSC)
             # -----------------------------------------------------------------
 
             print(
-                "\nMétodo 1: HTML/RSC..."
+                "\nMétodo único: faturas unificadas "
+                "do HTML/RSC..."
             )
 
-            registros_rsc = (
-                extrair_registros_do_rsc(
-                    html,
-                    "HTML_RSC"
-                )
-            )
-
-            print(
-                f"Registros encontrados "
-                f"no HTML/RSC: "
-                f"{len(registros_rsc)}"
-            )
-
-            registros.extend(
-                registros_rsc
-            )
-
-            # -----------------------------------------------------------------
-            # MÉTODO 2 - RESPONSES API
-            # -----------------------------------------------------------------
-
-            print(
-                "\nMétodo 2: Fetch/XHR/API..."
-            )
-
-            registros_api = (
-                extrair_registros_das_respostas_api()
+            registros = extrair_faturas(
+                html
             )
 
             print(
-                f"Registros encontrados "
-                f"nas APIs: "
-                f"{len(registros_api)}"
-            )
-
-            registros.extend(
-                registros_api
-            )
-
-            # -----------------------------------------------------------------
-            # DEDUPLICAÇÃO
-            # -----------------------------------------------------------------
-
-            registros = remover_duplicados(
-                registros
+                f"Faturas unificadas: "
+                f"{len(registros)}"
             )
 
             # =================================================================
@@ -2278,20 +2297,23 @@ async def main():
                     )
 
                     campos_amostra = [
-                        "id",
-                        "date_ref",
-                        "saved_trees",
-                        "saved_co2_kg",
-                        "saved_money",
-                        "kwh_consumed",
-                        "kwh_compensado",
-                        "dealership_energy_cost",
-                        "dealership_energy_cost_without_plin_estimation",
-                        "bill_cost",
-                        "dealership_bill_cost",
+                        "uc",
+                        "razao_social",
+                        "competencia",
                         "dealership_bill_id",
                         "bill_external_ref",
-                        "_origem",
+                        "kwh_consumed",
+                        "kwh_compensado",
+                        "consumption_flag",
+                        "dealership_bill_cost",
+                        "dealership_energy_cost_without_plin",
+                        "bill_cost",
+                        "saved_money",
+                        "saved_co2_kg",
+                        "saved_trees",
+                        "desconto",
+                        "bill_status",
+                        "tem_boleto_plin",
                     ]
 
                     for campo in campos_amostra:
@@ -2349,6 +2371,23 @@ async def main():
                 registros,
                 html
             )
+
+            # =================================================================
+            # BANCO DE DADOS
+            # =================================================================
+
+            try:
+
+                resumo_db = banco.gravar(
+                    registros,
+                    ARQUIVO_DB,
+                )
+
+            except Exception as erro:
+
+                print(
+                    f"[AVISO] Banco de dados: {erro}"
+                )
 
             # =================================================================
             # FINAL
