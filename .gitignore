@@ -22,6 +22,7 @@ saida_plin/*
 
 # Arquivos de diagnóstico da extração
 *.txt
+!requirements.txt
 
 # Cache Python
 __pycache__/

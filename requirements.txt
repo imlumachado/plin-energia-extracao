@@ -1,0 +1,11 @@
+# Extração (robo)
+playwright>=1.40.0
+python-dotenv>=1.0.0
+
+# Exportação
+openpyxl>=3.1.0
+
+# Dashboard
+pandas==3.0.5
+plotly==6.9.0
+streamlit==1.60.0
