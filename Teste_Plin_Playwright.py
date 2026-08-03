@@ -70,6 +70,15 @@ PASTA_RESPOSTAS.mkdir(parents=True, exist_ok=True)
 # CAMPOS DE INTERESSE
 # =============================================================================
 
+def modo_interativo():
+    return (
+        os.getenv("PLIN_HEADLESS", "0")
+        .strip()
+        .lower()
+        not in {"1", "true", "sim", "yes"}
+    )
+
+
 CAMPOS_RELATORIO = [
     "id",
     "company_id",
@@ -1296,6 +1305,14 @@ async def realizar_login(page):
             "Digite a senha PLIN: "
         )
 
+    if not email or not senha:
+
+        raise RuntimeError(
+            "Credenciais PLIN não encontradas. "
+            "Defina PLIN_EMAIL e PLIN_SENHA no .env "
+            "para executar em modo automatizado."
+        )
+
     # -------------------------------------------------------------------------
     # Verificação antes de fill
     # -------------------------------------------------------------------------
@@ -2142,7 +2159,12 @@ async def main():
             )
 
             browser = await playwright.chromium.launch(
-                headless=False,
+                headless=(
+                    os.getenv("PLIN_HEADLESS", "0")
+                    .strip()
+                    .lower()
+                    in {"1", "true", "sim", "yes"}
+                ),
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--disable-dev-shm-usage",
@@ -2454,9 +2476,11 @@ async def main():
                 "\n" + "=" * 80
             )
 
-            input(
-                "\nPressione ENTER para fechar o navegador..."
-            )
+            if modo_interativo():
+
+                input(
+                    "\nPressione ENTER para fechar o navegador..."
+                )
 
         except Exception as erro:
 
@@ -2478,9 +2502,11 @@ async def main():
 
             try:
 
-                input(
-                    "\nPressione ENTER para fechar..."
-                )
+                if modo_interativo():
+
+                    input(
+                        "\nPressione ENTER para fechar..."
+                    )
 
             except Exception:
                 pass
