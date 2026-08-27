@@ -50,6 +50,16 @@ PALETA_PLIN = [
 
 FATOR_EMISSAO_KG_KWH = 0.073
 
+MESES_PT = {
+    1: "jan", 2: "fev", 3: "mar", 4: "abr",
+    5: "mai", 6: "jun", 7: "jul", 8: "ago",
+    9: "set", 10: "out", 11: "nov", 12: "dez",
+}
+
+
+def _mes_pt(dt_obj):
+    return f"{MESES_PT[dt_obj.month]}/{dt_obj.year}"
+
 
 def _fonte_embed(arquivo):
     dados = base64.b64encode(
@@ -335,7 +345,7 @@ def carregar_dados():
         df["competencia"],
         format="%Y-%m",
         errors="coerce"
-    ).dt.strftime("%b/%Y")
+    ).apply(_mes_pt)
 
     df["competencia_sort"] = df["competencia"]
 
@@ -606,7 +616,7 @@ serie_co2 = (
 serie_co2["competencia_label"] = pd.to_datetime(
     serie_co2["competencia"],
     format="%Y-%m",
-).dt.strftime("%b/%Y")
+).apply(_mes_pt)
 
 fig_co2 = go.Figure()
 
@@ -676,7 +686,7 @@ with tab_economia:
     serie_economia["competencia_label"] = pd.to_datetime(
         serie_economia["competencia"],
         format="%Y-%m",
-    ).dt.strftime("%b/%Y")
+    ).apply(_mes_pt)
 
     fig = go.Figure()
 
@@ -720,7 +730,7 @@ with tab_consumo:
     serie_consumo["competencia_label"] = pd.to_datetime(
         serie_consumo["competencia"],
         format="%Y-%m",
-    ).dt.strftime("%b/%Y")
+    ).apply(_mes_pt)
 
     fig = go.Figure()
 
