@@ -423,12 +423,33 @@ ucs_ordenadas = sorted(
 
 with st.sidebar:
 
-    ucs_selecionadas = st.multiselect(
-        "Unidades Consumidoras",
-        options=ucs_ordenadas,
-        default=ucs_ordenadas,
-        help="Selecione as UCs a incluir na análise.",
-    )
+    st.markdown("#### Unidades Consumidoras")
+
+    if "ucs_sel" not in st.session_state:
+        st.session_state.ucs_sel = set(ucs_ordenadas)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Todas", use_container_width=True):
+            st.session_state.ucs_sel = set(ucs_ordenadas)
+            st.rerun()
+    with col2:
+        if st.button("Nenhuma", use_container_width=True):
+            st.session_state.ucs_sel = set()
+            st.rerun()
+
+    with st.expander(
+        f"{len(st.session_state.ucs_sel)}/{len(ucs_ordenadas)} selecionadas",
+        expanded=False,
+    ):
+        for uc in ucs_ordenadas:
+            marcado = uc in st.session_state.ucs_sel
+            if st.checkbox(uc, value=marcado, key=f"uc_{uc}"):
+                st.session_state.ucs_sel.add(uc)
+            else:
+                st.session_state.ucs_sel.discard(uc)
+
+    ucs_selecionadas = sorted(st.session_state.ucs_sel) or ucs_ordenadas
 
     st.markdown("#### Período")
 
