@@ -918,10 +918,3 @@ with tab_bandeira:
 # =============================================================================
 # RODAPÉ
 # =============================================================================
-
-st.divider()
-
-st.caption(
-    "Dashboard gerado automaticamente a partir dos dados "
-    "coletados pelo robô PLIN."
-)
