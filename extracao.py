@@ -1,25 +1,25 @@
 
 """
-Extração unificada das faturas PLIN a partir do payload RSC.
+Pega as faturas PLIN do payload RSC e junta tudo numa coisa só.
 
-O portal Next.js injeta os dados em blocos `self.__next_f.push([1, "..."])`.
-Dentro desses blocos existe a hierarquia:
+O portal (Next.js) injeta os dados em blocos `self.__next_f.push([1, "..."])`.
+Dentro deles os dados vêm nessa hierarquia:
 
     ucs[N]                                   <- unidade consumidora
     └── energy_reads[M]                      <- fatura da concessionária
         └── energy_bills[0]                  <- boleto PLIN (economia)
 
-A extração anterior achatava cada dicionário em um registro separado,
-"quebrando" cada fatura em 2 linhas. Este módulo percorre a hierarquia e
-gera UMA fatura completa por energy_read, mesclando os dados do boleto.
+Antes o código achatava cada dicionário num registro separado, o que
+"quebrava" cada fatura em 2 linhas. Aqui a gente percorre a hierarquia e
+monta UMA fatura completa por energy_read, juntando os dados do boleto.
 
-Chave de junção: energy_bills[0].energy_read_id == energy_read.id
-(verificada: 734/734 boletos vinculados).
+Ligação: energy_bills[0].energy_read_id == energy_read.id
+(conferida: 734/734 boletos vinculados).
 
-Uso como script:
+Como script:
     python extracao.py <arquivo_html_ou_rsc> [saida.json]
 
-Uso como módulo:
+Como módulo:
     from extracao import extrair_faturas
     faturas = extrair_faturas(html)
 """
@@ -137,9 +137,7 @@ def normalizar_fatura(fatura):
 # =============================================================================
 
 def extrair_blocos_rsc(texto):
-    """
-    Extrai o conteúdo decodificado de cada bloco self.__next_f.push.
-    """
+    """Devolve o conteúdo decodificado de cada bloco self.__next_f.push."""
     blocos = []
 
     padroes = [
@@ -170,9 +168,7 @@ def extrair_blocos_rsc(texto):
 
 
 def extrair_objetos_balanceados(texto):
-    """
-    Extrai todos os objetos JSON `{...}` balanceados de um texto.
-    """
+    """Pega todos os objetos JSON `{...}` balanceados de um texto."""
     objetos = []
 
     inicio = None
@@ -272,8 +268,7 @@ def _campos_energy_bill(bill):
 
 def _eh_placeholder(fatura):
     """
-    Faturas placeholder do tipo `UC.1.1970` (PENDING, sem dados) devem
-    ser descartadas.
+    Descarta as faturas placeholder do tipo `UC.1.1970` (PENDING, sem dados).
     """
     dealership_bill_id = fatura.get("dealership_bill_id") or ""
     if "1.1970" in str(dealership_bill_id):
@@ -292,11 +287,11 @@ def _eh_placeholder(fatura):
 
 def extrair_faturas(texto_rsc):
     """
-    Extrai faturas unificadas do payload RSC.
+    Junta as faturas a partir do payload RSC.
 
-    Retorna lista de dicionários (um por energy_read), com os dados do
-    boleto PLIN mesclados. Placeholders (1970) são descartados e
-    duplicatas do mesmo energy_read (render mobile/desktop) são removidas.
+    Devolve uma lista de dicionários (um por energy_read), já com os dados
+    do boleto PLIN. Placeholders (1970) são descartados e duplicatas do
+    mesmo energy_read (render mobile/desktop) são removidas.
     """
     faturas = []
     vistos = set()

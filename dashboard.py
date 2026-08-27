@@ -2,10 +2,10 @@
 """
 Dashboard Streamlit das faturas PLIN.
 
-Executar:
+Rodar:
     .venv\\Scripts\\python.exe -m streamlit run dashboard.py
 
-Dados: lidos do banco SQLite gerado pelo robô (db.py / Teste_Plin_Playwright.py).
+Os dados vêm do banco SQLite gerado pelo robô (db.py / Teste_Plin_Playwright.py).
 """
 
 import base64
@@ -47,6 +47,8 @@ PALETA_PLIN = [
     "#D4E9D6",
     "#706F6F",
 ]
+
+FATOR_EMISSAO_KG_KWH = 0.073
 
 
 def _fonte_embed(arquivo):
@@ -311,6 +313,10 @@ def carregar_dados():
             errors="coerce"
         )
 
+    df["co2_emitido_kg"] = (
+        df["kwh_consumed"] * FATOR_EMISSAO_KG_KWH
+    )
+
     df["tem_boleto_plin"] = (
         df["tem_boleto_plin"].astype(
             bool
@@ -430,11 +436,6 @@ with st.sidebar:
         ),
     )
 
-    mostrar_tabela = st.checkbox(
-        "Mostrar tabela detalhada",
-        value=True,
-    )
-
     st.divider()
 
     st.caption(
@@ -495,76 +496,144 @@ kpi_desconto = com_boleto["saved_money"].sum()
 kpi_desconto_liquido = kpi_desconto - kpi_iluminacao
 
 kpi_co2 = com_boleto["saved_co2_kg"].sum()
+kpi_co2_emitido = dados["co2_emitido_kg"].sum()
 kpi_arvores = com_boleto["saved_trees"].sum()
 kpi_consumo = dados["kwh_consumed"].sum()
 kpi_compensado = dados["kwh_compensado"].sum()
 
-col1, col2, col3, col4, col5 = st.columns(5)
-
-with col1:
-    st.metric(
+kpis = [
+    (
         "Valor de faturas PLIN",
         formato_real(kpi_fatura_plin),
-        help="Soma do valor das faturas da PLIN (bill_cost).",
-    )
-
-with col2:
-    st.metric(
+        "Soma do valor das faturas da PLIN (bill_cost).",
+    ),
+    (
         "Valor de faturas COPEL",
         formato_real(kpi_fatura_copel),
-        help="Soma do valor das faturas da concessionária (dealership_bill_cost).",
-    )
-
-with col3:
-    st.metric(
+        "Soma do valor das faturas da concessionária (dealership_bill_cost).",
+    ),
+    (
         "Iluminação pública",
         formato_real(kpi_iluminacao),
-        help="Taxas da concessionária, incl. iluminação pública (dealership_extra_fees).",
-    )
-
-with col4:
-    st.metric(
+        "Taxas da concessionária, incl. iluminação pública (dealership_extra_fees).",
+    ),
+    (
         "Valor de desconto",
         formato_real(kpi_desconto),
-        help="Economia total gerada pela PLIN (saved_money).",
-    )
-
-with col5:
-    st.metric(
+        "Economia total gerada pela PLIN (saved_money).",
+    ),
+    (
         "Valor de desconto líquido",
         formato_real(kpi_desconto_liquido),
-        help="Desconto total menos a iluminação pública.",
-    )
-
-col6, col7, col8, col9 = st.columns(4)
-
-with col6:
-    st.metric(
+        "Desconto total menos a iluminação pública.",
+    ),
+    (
         "CO₂ evitado",
         f"{formato_compacto(kpi_co2)} kg",
-        help="Total de CO₂ que deixou de ser emitido.",
-    )
-
-with col7:
-    st.metric(
+        "Total de CO₂ que deixou de ser emitido.",
+    ),
+    (
+        "CO₂ emitido (est.)",
+        f"{formato_compacto(kpi_co2_emitido)} kg",
+        (
+            "Estimativa das emissões a partir do consumo "
+            f"({FATOR_EMISSAO_KG_KWH} kg de CO₂ por kWh, "
+            "fator de emissão do SIN/MCTI)."
+        ),
+    ),
+    (
         "Árvores poupadas",
         formato_compacto(kpi_arvores),
-        help="Equivalência em árvores preservadas.",
-    )
-
-with col8:
-    st.metric(
+        "Equivalência em árvores preservadas.",
+    ),
+    (
         "Consumo total",
         f"{formato_compacto(kpi_consumo)} kWh",
-        help="Consumo medido nas faturas.",
-    )
-
-with col9:
-    st.metric(
+        "Consumo medido nas faturas.",
+    ),
+    (
         "Energia compensada",
         f"{formato_compacto(abs(kpi_compensado))} kWh",
-        help="Energia injetada/compensada na rede.",
+        "Energia injetada/compensada na rede.",
+    ),
+]
+
+colunas_kpi = st.columns(len(kpis))
+
+for coluna, (rotulo, valor, ajuda) in zip(
+    colunas_kpi,
+    kpis,
+):
+    with coluna:
+        st.metric(
+            rotulo,
+            valor,
+            help=ajuda,
+        )
+
+st.divider()
+
+# =============================================================================
+# GRÁFICO COMPARATIVO - CO2 EMITIDO X EVITADO
+# =============================================================================
+
+st.subheader("CO₂ emitido × CO₂ evitado")
+
+serie_co2 = (
+    dados
+    .groupby("competencia")["co2_emitido_kg"]
+    .sum()
+    .rename("co2_emitido_kg")
+    .to_frame()
+    .join(
+        com_boleto
+        .groupby("competencia")["saved_co2_kg"]
+        .sum()
     )
+    .fillna(0)
+    .reset_index()
+)
+
+serie_co2["competencia_label"] = pd.to_datetime(
+    serie_co2["competencia"],
+    format="%Y-%m",
+).dt.strftime("%b/%Y")
+
+fig_co2 = go.Figure()
+
+fig_co2.add_trace(
+    go.Bar(
+        x=serie_co2["competencia_label"],
+        y=serie_co2["co2_emitido_kg"],
+        name="CO₂ emitido",
+        marker_color=COR_CONSUMO,
+    )
+)
+
+fig_co2.add_trace(
+    go.Bar(
+        x=serie_co2["competencia_label"],
+        y=serie_co2["saved_co2_kg"],
+        name="CO₂ evitado",
+        marker_color=COR_ECONOMIA,
+    )
+)
+
+fig_co2.update_layout(
+    title="CO₂ emitido × CO₂ evitado por competência",
+    xaxis_title="Competência",
+    yaxis_title="kg de CO₂",
+    barmode="group",
+    height=420,
+    margin=dict(l=40, r=20, t=50, b=40),
+)
+
+estilo_grafico(fig_co2)
+
+st.plotly_chart(
+    fig_co2,
+    width="stretch",
+)
 
 st.divider()
 
@@ -826,86 +895,6 @@ with tab_bandeira:
         fig,
         width="stretch",
     )
-
-# =============================================================================
-# TABELA DETALHADA
-# =============================================================================
-
-if mostrar_tabela:
-
-    st.divider()
-    st.subheader("Faturas")
-
-    colunas_tabela = {
-        "competencia": "Competência",
-        "uc": "UC",
-        "razao_social": "Razão social",
-        "kwh_consumed": "Consumo (kWh)",
-        "kwh_compensado": "Compensado (kWh)",
-        "consumption_flag": "Bandeira",
-        "dealership_bill_cost": "Custo concess. (R$)",
-        "bill_cost": "Valor fatura (R$)",
-        "saved_money": "Economia (R$)",
-        "saved_co2_kg": "CO₂ (kg)",
-        "saved_trees": "Árvores",
-        "desconto": "Desconto",
-        "bill_status": "Status",
-        "bill_pdf_url": "PDF",
-    }
-
-    colunas_existentes = [
-        c for c in colunas_tabela
-        if c in dados.columns
-    ]
-
-    tabela = dados[colunas_existentes].copy()
-
-    tabela = tabela.rename(
-        columns=colunas_tabela
-    )
-
-    tabela["Desconto"] = pd.to_numeric(
-        tabela["Desconto"],
-        errors="coerce"
-    )
-
-    def formatar_desconto(valor):
-        if pd.isna(valor):
-            return "—"
-        return f"{valor:.1%}"
-
-    if "Desconto" in tabela.columns:
-        tabela["Desconto"] = tabela["Desconto"].apply(
-            formatar_desconto
-        )
-
-    def formatar_pdf(url):
-        if not url:
-            return ""
-        return f"[PDF]({url})"
-
-    if "PDF" in tabela.columns:
-        tabela["PDF"] = tabela["PDF"].apply(
-            formatar_pdf
-        )
-
-    st.dataframe(
-        tabela,
-        width="stretch",
-        hide_index=True,
-    )
-
-    csv_bytes = tabela.to_csv(
-        index=False
-    ).encode("utf-8")
-
-    st.download_button(
-        "Baixar CSV filtrado",
-        data=csv_bytes,
-        file_name="faturas_plin.csv",
-        mime="text/csv",
-    )
-
 
 # =============================================================================
 # RODAPÉ

@@ -1,17 +1,15 @@
 
 """
-Camada de persistência SQLite para as faturas PLIN.
+Guarda as faturas PLIN num SQLite.
 
-Responsabilidades:
-    - criar o schema (tabelas faturas e execucoes)
-    - gravar faturas com upsert (sem duplicar ao rodar de novo)
-    - registrar cada execução da coleta
-    - oferecer consultas simples para o dashboard
+Aqui a gente cria as tabelas, grava as faturas (sem duplicar quando a
+extração roda de novo), registra cada coleta e disponibiliza umas
+consultas simples pro dashboard.
 
-Uso como script:
+Como script:
     python db.py <banco.sqlite> <faturas.json> [--novo]
 
-Uso como módulo:
+Como módulo:
     import db
     resumo = db.gravar(faturas, "saida_plin/plin.db")
     faturas = db.consultar_todas("saida_plin/plin.db")
@@ -110,6 +108,8 @@ ON CONFLICT(dealership_bill_id) DO UPDATE SET
 # =============================================================================
 # CONEXÃO E SCHEMA
 # =============================================================================
+# CONEXÃO E SCHEMA
+# =============================================================================
 
 def conectar(caminho):
     caminho = Path(caminho)
@@ -168,9 +168,9 @@ def _preparar_fatura(fatura, coletado_em):
 
 def upsert_faturas(conn, faturas, coletado_em=None):
     """
-    Grava faturas com upsert pela dealership_bill_id.
+    Grava as faturas, atualizando por dealership_bill_id.
 
-    Retorna (novas, atualizadas).
+    Devolve o total de novas e de atualizadas.
     """
     if coletado_em is None:
         coletado_em = datetime.now().isoformat()
@@ -252,9 +252,9 @@ def gravar(
     detalhe=None,
 ):
     """
-    Fluxo completo: conecta, cria schema, faz upsert e registra execução.
+    Fluxo completo: conecta, cria schema, faz upsert e registra a execução.
 
-    Retorna um dicionário com o resumo da gravação.
+    Devolve um dicionário com o resumo da gravação.
     """
     conn = conectar(caminho_db)
 
