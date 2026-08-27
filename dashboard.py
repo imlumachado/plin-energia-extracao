@@ -172,24 +172,28 @@ h3 {{ font-size: 1.5rem; }}
 [data-testid="stMetric"] {{
     background-color: var(--plin-preto);
     border-radius: 10px;
-    padding: 1.25rem 1.1rem;
+    padding: 1rem 1rem;
     border: 1px solid var(--plin-preto);
+    height: 100%;
 }}
 [data-testid="stMetricLabel"] {{
     font-family: 'Stack Sans Text', 'Segoe UI', Arial, sans-serif;
     font-weight: 600;
-    font-size: 0.95rem;
-    letter-spacing: 0.5px;
+    font-size: 0.78rem;
+    letter-spacing: 0.3px;
     text-transform: uppercase;
+    line-height: 1.25;
+    display: block;
     color: var(--plin-branco);
 }}
 [data-testid="stMetricValue"] {{
     font-family: 'Stack Sans Notch', 'Segoe UI', Arial, sans-serif;
     font-weight: 700;
-    font-size: 1.75rem;
+    font-size: 1.45rem;
     line-height: 1.15;
-    white-space: nowrap;
+    white-space: normal;
     color: var(--plin-verde);
+    margin-top: 0.25rem;
 }}
 
 [data-testid="stSidebar"] {{
@@ -558,18 +562,23 @@ kpis = [
     ),
 ]
 
-colunas_kpi = st.columns(len(kpis))
+KPI_POR_LINHA = 4
 
-for coluna, (rotulo, valor, ajuda) in zip(
-    colunas_kpi,
-    kpis,
-):
-    with coluna:
-        st.metric(
-            rotulo,
-            valor,
-            help=ajuda,
-        )
+for i in range(0, len(kpis), KPI_POR_LINHA):
+    bloco = kpis[i:i + KPI_POR_LINHA]
+
+    colunas_kpi = st.columns(len(bloco))
+
+    for coluna, (rotulo, valor, ajuda) in zip(
+        colunas_kpi,
+        bloco,
+    ):
+        with coluna:
+            st.metric(
+                rotulo,
+                valor,
+                help=ajuda,
+            )
 
 st.divider()
 
@@ -620,12 +629,12 @@ fig_co2.add_trace(
 )
 
 fig_co2.update_layout(
-    title="CO₂ emitido × CO₂ evitado por competência",
+    title="",
     xaxis_title="Competência",
     yaxis_title="kg de CO₂",
     barmode="group",
     height=420,
-    margin=dict(l=40, r=20, t=50, b=40),
+    margin=dict(l=40, r=20, t=40, b=40),
 )
 
 estilo_grafico(fig_co2)
