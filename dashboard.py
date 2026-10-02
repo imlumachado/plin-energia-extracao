@@ -39,6 +39,7 @@ COR_BRANCO = "#FFFFFF"
 COR_PRETO = "#0C0D0E"
 COR_VERDE_ESCURO = "#2F532E"
 COR_VERDE_CLARO = "#D4E9D6"
+COR_PENDENTE = "#D4E9D6"
 
 PALETA_PLIN = [
     "#02DE81",
@@ -524,6 +525,14 @@ st.caption(texto_cabecalho)
 
 com_boleto = dados[dados["tem_boleto_plin"]]
 
+# energy_reads sem boleto PLIN (competência ainda não fechada pela
+# concessionária) continuam no dashboard: o mês não pode sumir do período
+# selecionado só porque a fatura ainda não fechou.
+ucs_pendentes = (
+    dados.groupby("competencia")["tem_boleto_plin"]
+    .apply(lambda coluna: int((~coluna).sum()))
+)
+
 kpi_fatura_plin = com_boleto["bill_cost"].sum()
 kpi_fatura_copel = com_boleto["dealership_bill_cost"].sum()
 kpi_iluminacao = com_boleto["dealership_extra_fees"].sum()
@@ -590,6 +599,15 @@ kpis = [
         "Energia compensada",
         f"{formato_compacto(abs(kpi_compensado))} kWh",
         "Energia injetada/compensada na rede.",
+    ),
+    (
+        "UCs aguardando fechamento",
+        f"{int(ucs_pendentes.reindex(dados['competencia'].unique()).sum())}",
+        (
+            "UCs com competência selecionada que ainda não têm "
+            "fatura da concessionária. Os valores entram assim que "
+            "a COPEL fechar o mês."
+        ),
     ),
 ]
 
@@ -696,12 +714,31 @@ tab_economia, tab_consumo, tab_ucs, tab_bandeira = st.tabs(
 
 with tab_economia:
 
+    competencias_periodo = sorted(
+        dados["competencia"].unique()
+    )
+
+    # reindexa pelo período inteiro (e não só pelas competências com
+    # boleto) para a competência pendente continuar visível no eixo
     serie_economia = (
         com_boleto
         .groupby("competencia")["saved_money"]
         .sum()
-        .reindex(sorted(com_boleto["competencia"].unique()))
+        .reindex(competencias_periodo)
+        .fillna(0)
+        .rename("saved_money")
         .reset_index()
+    )
+
+    # só entra em destaque a competência que não tem NENHUMA fatura
+    # fechada; mês com 1 UC pendente entre 19 já tem o que mostrar
+    sem_fechamento = (
+        com_boleto
+        .groupby("competencia")["tem_boleto_plin"]
+        .sum()
+        .reindex(competencias_periodo)
+        .fillna(0)
+        .eq(0)
     )
 
     serie_economia["competencia_label"] = pd.to_datetime(
@@ -716,7 +753,14 @@ with tab_economia:
             x=serie_economia["competencia_label"],
             y=serie_economia["saved_money"],
             name="Economia",
-            marker_color=COR_ECONOMIA,
+            marker_color=[
+                (
+                    COR_PENDENTE
+                    if aguardando
+                    else COR_ECONOMIA
+                )
+                for aguardando in sem_fechamento
+            ],
         )
     )
 
@@ -735,12 +779,32 @@ with tab_economia:
         width="stretch",
     )
 
+    meses_pendentes = [
+        rotulo
+        for rotulo, aguardando in zip(
+            serie_economia["competencia_label"],
+            sem_fechamento,
+        )
+        if aguardando
+    ]
+
+    if meses_pendentes:
+        st.caption(
+            "Em claro, sem fechamento da concessionária: "
+            + ", ".join(meses_pendentes)
+            + ". Assim que o portal publicar o consumo e a energia "
+            "compensada, os valores entram aqui e nos gráficos "
+            "de consumo."
+        )
+
 # -----------------------------------------------------------------------------
 # TAB 2 - CONSUMO
 # -----------------------------------------------------------------------------
 
 with tab_consumo:
 
+    # usa `dados` (e não `com_boleto`) para que o consumo de uma
+    # competência pendente continue no gráfico
     serie_consumo = (
         dados
         .groupby("competencia")[["kwh_consumed", "kwh_compensado"]]
