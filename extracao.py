@@ -3,7 +3,10 @@
 Pega as faturas PLIN do payload RSC e junta tudo numa coisa só.
 
 O portal (Next.js) injeta os dados em blocos `self.__next_f.push([1, "..."])`.
-Dentro deles os dados vêm nessa hierarquia:
+Dentro deles os dados vêm deduplicados no formato "flight": cada objeto é
+uma linha `<id>:<json>` e os campos repetidos viram `"$25"`. Então primeiro
+a gente junta os blocos, indexa as linhas e resolve as referências. Depois
+percorre a hierarquia:
 
     ucs[N]                                   <- unidade consumidora
     └── energy_reads[M]                      <- fatura da concessionária
@@ -12,6 +15,10 @@ Dentro deles os dados vêm nessa hierarquia:
 Antes o código achatava cada dicionário num registro separado, o que
 "quebrava" cada fatura em 2 linhas. Aqui a gente percorre a hierarquia e
 monta UMA fatura completa por energy_read, juntando os dados do boleto.
+
+O portal também parou de enviar `dealership_bill_id`; a gente reconstrói a
+mesma chave (`<uc>.<mês>.<ano>`) a partir do `date_ref`, que é o que segura
+a deduplicação no banco.
 
 Ligação: energy_bills[0].energy_read_id == energy_read.id
 (conferida: 734/734 boletos vinculados).
@@ -133,38 +140,123 @@ def normalizar_fatura(fatura):
 
 
 # =============================================================================
-# PARSER DO RSC
+# PAYLOAD DO NEXT.JS (FLIGHT)
 # =============================================================================
 
-def extrair_blocos_rsc(texto):
-    """Devolve o conteúdo decodificado de cada bloco self.__next_f.push."""
-    blocos = []
+RE_BLOCO_RSC = re.compile(
+    r'self\.__next_f\.push\(\[1,\s*("(?:[^"\\]|\\.)*")\]\)',
+    re.DOTALL
+)
 
-    padroes = [
-        re.compile(
-            r'self\.__next_f\.push\(\[1,(.*?)\]\)',
-            re.DOTALL
-        ),
-        re.compile(
-            r'self\.__next_f\.push\(\[1,\s*"(.*?)"\]\)',
-            re.DOTALL
-        ),
-    ]
+RE_LINHA_FLIGHT = re.compile(
+    r"(?:^|\n)([0-9a-fA-F]+):"
+)
 
-    for padrao in padroes:
-        for bloco in padrao.findall(texto):
-            try:
-                valor = json.loads(bloco)
-            except Exception:
-                valor = None
+RE_REFERENCIA = re.compile(
+    r"^\$([0-9a-fA-F]+)"
+)
 
-            if isinstance(valor, str):
-                blocos.append(valor)
-            elif isinstance(valor, list) and len(valor) > 1:
-                if isinstance(valor[1], str):
-                    blocos.append(valor[1])
+
+def juntar_payload_rsc(texto):
+    """Junta, num texto só, o conteúdo de cada bloco self.__next_f.push."""
+    partes = []
+
+    for bruto in RE_BLOCO_RSC.findall(texto):
+        try:
+            partes.append(json.loads(bruto))
+        except Exception:
+            continue
+
+    return "".join(partes)
+
+
+def indexar_blocos_flight(payload):
+    """
+    Mapeia as linhas `<id>:<json>` do payload em um dicionário.
+
+    O Next.js deduplica o payload: cada objeto vira uma linha e os campos
+    repetidos viram `"$25"`. Sem esse índice não dá para resolver nada.
+    """
+    marcadores = list(RE_LINHA_FLIGHT.finditer(payload))
+    blocos = {}
+
+    for posicao, marcador in enumerate(marcadores):
+        inicio = marcador.end()
+        fim = (
+            marcadores[posicao + 1].start()
+            if posicao + 1 < len(marcadores)
+            else len(payload)
+        )
+
+        corpo = payload[inicio:fim].strip()
+
+        if corpo[:1] not in ("{", "["):
+            continue
+
+        try:
+            blocos[marcador.group(1)] = json.loads(corpo)
+        except Exception:
+            continue
 
     return blocos
+
+
+def resolver_referencias(valor, blocos, cache=None, pilha=frozenset()):
+    """
+    Troca as referências `$id` do payload pelos objetos que elas apontam.
+
+    Sem isso `energy_reads` chega como a string `"$25"` e nenhuma fatura é
+    montada. O cache evita repetir o trabalho nos objetos compartilhados
+    (conta de pagamento, concessionária, etc.).
+    """
+    if cache is None:
+        cache = {}
+
+    if isinstance(valor, str):
+        referencia = RE_REFERENCIA.match(valor)
+
+        if not referencia:
+            return valor
+
+        chave = referencia.group(1)
+
+        if chave in cache:
+            return cache[chave]
+
+        if chave in pilha:
+            return None
+
+        cache[chave] = None
+
+        resolvido = resolver_referencias(
+            blocos.get(chave),
+            blocos,
+            cache,
+            pilha | {chave}
+        )
+
+        cache[chave] = resolvido
+
+        return resolvido
+
+    if isinstance(valor, list):
+        return [
+            resolver_referencias(item, blocos, cache, pilha)
+            for item in valor
+        ]
+
+    if isinstance(valor, dict):
+        return {
+            chave: resolver_referencias(
+                item,
+                blocos,
+                cache,
+                pilha
+            )
+            for chave, item in valor.items()
+        }
+
+    return valor
 
 
 def extrair_objetos_balanceados(texto):
@@ -240,7 +332,6 @@ def _campos_energy_read(energy_read):
         "file_key": energy_read.get("file_key"),
     }
 
-
 def _campos_energy_bill(bill):
     return {
         "bill_external_ref": bill.get("bill_external_ref"),
@@ -285,9 +376,76 @@ def _eh_placeholder(fatura):
 # EXTRAÇÃO PRINCIPAL
 # =============================================================================
 
+def _montar_chave_fatura(fatura):
+    """
+    Monta a chave `<uc>.<mês>.<ano>` que o portal usava como identificador.
+
+    O portal parou de mandar `dealership_bill_id`, mas a chave continua
+    valendo: é ela que impede o banco de duplicar a fatura a cada extração.
+    """
+    date_ref = fatura.get("date_ref") or ""
+
+    if len(date_ref) < 7:
+        return None
+
+    if not (date_ref[:4].isdigit() and date_ref[5:7].isdigit()):
+        return None
+
+    return (
+        f"{fatura.get('uc')}."
+        f"{int(date_ref[5:7])}."
+        f"{int(date_ref[:4])}"
+    )
+
+
+def _registrar_faturas(uc, faturas, vistos):
+    """Junta as faturas de uma UC, uma por energy_read."""
+    uc_info = _campos_uc(uc)
+
+    for energy_read in uc.get("energy_reads") or []:
+        if not isinstance(energy_read, dict):
+            continue
+
+        energy_read_id = energy_read.get("id")
+
+        if energy_read_id in vistos:
+            continue
+
+        vistos.add(energy_read_id)
+
+        fatura = _campos_energy_read(energy_read)
+        fatura.update(uc_info)
+
+        bills = energy_read.get("energy_bills") or []
+
+        if isinstance(bills, list) and bills:
+            fatura.update(
+                _campos_energy_bill(bills[0])
+            )
+            fatura["tem_boleto_plin"] = True
+        else:
+            fatura["tem_boleto_plin"] = False
+
+        fatura["competencia"] = (
+            (fatura.get("date_ref") or "")[:7]
+        )
+
+        fatura["dealership_bill_id"] = (
+            fatura.get("dealership_bill_id")
+            or _montar_chave_fatura(fatura)
+        )
+
+        if _eh_placeholder(fatura):
+            continue
+
+        faturas.append(
+            normalizar_fatura(fatura)
+        )
+
+
 def extrair_faturas(texto_rsc):
     """
-    Junta as faturas a partir do payload RSC.
+    Junta as faturas a partir do payload do portal.
 
     Devolve uma lista de dicionários (um por energy_read), já com os dados
     do boleto PLIN. Placeholders (1970) são descartados e duplicatas do
@@ -296,67 +454,59 @@ def extrair_faturas(texto_rsc):
     faturas = []
     vistos = set()
 
-    blocos = extrair_blocos_rsc(texto_rsc)
+    payload = juntar_payload_rsc(texto_rsc)
+    blocos = indexar_blocos_flight(payload)
 
-    for bloco in blocos:
-        for objeto_texto in extrair_objetos_balanceados(bloco):
+    cache = {}
+
+    def resolver(valor):
+        return resolver_referencias(
+            valor,
+            blocos,
+            cache
+        )
+
+    pilha = list(blocos.values())
+
+    while pilha:
+        atual = pilha.pop()
+
+        if isinstance(atual, dict):
+            if "uc" in atual and "energy_reads" in atual:
+                _registrar_faturas(
+                    resolver(atual),
+                    faturas,
+                    vistos
+                )
+            else:
+                pilha.extend(atual.values())
+
+        elif isinstance(atual, list):
+            pilha.extend(atual)
+
+    # formato antigo: hierarquia embutida no HTML, sem índices do flight
+    if not faturas:
+        for objeto_texto in extrair_objetos_balanceados(payload):
             try:
                 dados = json.loads(objeto_texto)
             except Exception:
                 continue
 
-            # -----------------------------------------------------------------
-            # Percorre a árvore procurando objetos UC
-            # (dict com `uc` e `energy_reads`)
-            # -----------------------------------------------------------------
             pilha = [dados]
 
             while pilha:
                 atual = pilha.pop()
 
                 if isinstance(atual, dict):
-                    if (
-                        "energy_reads" in atual
-                        and isinstance(atual["energy_reads"], list)
-                        and "uc" in atual
+                    if "uc" in atual and isinstance(
+                        atual.get("energy_reads"),
+                        list
                     ):
-                        uc_info = _campos_uc(atual)
-
-                        for energy_read in atual["energy_reads"]:
-                            if not isinstance(energy_read, dict):
-                                continue
-                            if "dealership_bill_id" not in energy_read:
-                                continue
-
-                            energy_read_id = energy_read.get("id")
-
-                            if energy_read_id in vistos:
-                                continue
-                            vistos.add(energy_read_id)
-
-                            fatura = _campos_energy_read(energy_read)
-                            fatura.update(uc_info)
-
-                            bills = energy_read.get("energy_bills") or []
-
-                            if bills:
-                                fatura.update(
-                                    _campos_energy_bill(bills[0])
-                                )
-                                fatura["tem_boleto_plin"] = True
-                            else:
-                                fatura["tem_boleto_plin"] = False
-
-                            fatura["competencia"] = (
-                                (fatura.get("date_ref") or "")[:7]
-                            )
-
-                            if _eh_placeholder(fatura):
-                                continue
-
-                            faturas.append(
-                                normalizar_fatura(fatura)
-                            )
+                        _registrar_faturas(
+                            atual,
+                            faturas,
+                            vistos
+                        )
 
                     pilha.extend(atual.values())
 
